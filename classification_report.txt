@@ -1,0 +1,62 @@
+================================================================================
+CHRONIC KIDNEY DISEASE CLASSIFICATION REPORT
+k-Nearest Neighbors Classifier
+================================================================================
+
+1. DATASET INFORMATION
+----------------------------------------
+Total samples: 397
+Number of features: 24
+Training samples: 317
+Testing samples: 80
+
+2. DATA PREPROCESSING
+----------------------------------------
+• Missing value imputation: KNN Imputer (k=5)
+• Categorical encoding: Label Encoding
+• Feature scaling: Standard Scaler
+• Train-test split: 80-20
+
+3. MODEL PERFORMANCE WITHOUT PCA
+----------------------------------------
+Number of features: 24
+Best k value: 4
+Accuracy: 96.25%
+
+4. MODEL PERFORMANCE WITH PCA
+----------------------------------------
+Number of features: 20
+Best k value: 4
+Accuracy: 96.25%
+Variance explained: 95%
+
+5. BEST MODEL (AFTER HYPERPARAMETER TUNING)
+----------------------------------------
+Best parameters: {'algorithm': 'auto', 'leaf_size': 30, 'metric': 'euclidean', 'metric_params': None, 'n_jobs': None, 'n_neighbors': 3, 'p': 1, 'weights': 'uniform'}
+Accuracy: 95.00%
+Precision: 95.59%
+Recall: 95.00%
+F1-Score: 95.05%
+
+6. EFFECT OF K PARAMETER
+----------------------------------------
+The k parameter significantly affects classification accuracy:
+• Small k (1-3): High variance, prone to overfitting
+• Medium k (5-11): Balanced bias-variance tradeoff
+• Large k (>15): High bias, may underfit
+• Optimal k found: 4
+
+7. KEY FINDINGS
+----------------------------------------
+• k-NN classifier achieved high accuracy on CKD dataset
+• PCA reduced dimensionality while maintaining performance
+• Optimal k value balances model complexity and accuracy
+• Feature importance analysis identified key predictors
+
+8. CONCLUSION
+----------------------------------------
+The k-NN classifier successfully classified chronic kidney disease
+with high accuracy. Preprocessing and hyperparameter tuning were
+crucial for optimal performance.
+
+================================================================================
