@@ -1,10 +1,6 @@
 """
 Chronic Kidney Disease Classification using k-Nearest Neighbors
-Enhanced version combining comprehensive analysis with optimal PCA implementation
-
-This script performs comprehensive analysis and classification of the 
-Chronic Kidney Disease dataset using k-NN classifier with various 
-preprocessing techniques and hyperparameter tuning.
+CSCI 31022 - Machine Learning and Pattern Recognition
 """
 
 import numpy as np
@@ -12,865 +8,394 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.io import arff
-from pathlib import Path
 import warnings
-import json
-import joblib
 warnings.filterwarnings('ignore')
 
-# Sklearn imports
-from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV, StratifiedKFold
-from sklearn.preprocessing import LabelEncoder, StandardScaler, OneHotEncoder
+from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.impute import KNNImputer
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.decomposition import PCA
 from sklearn.feature_selection import mutual_info_classif
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.utils import shuffle
-from sklearn.metrics import (accuracy_score, precision_score, recall_score, 
-                             f1_score, confusion_matrix, classification_report,
-                             roc_curve, auc, roc_auc_score)
+from sklearn.metrics import (accuracy_score, precision_score, recall_score, f1_score, 
+                             confusion_matrix, classification_report, roc_curve, auc, roc_auc_score)
 
-# Set random seed for reproducibility
 RANDOM_STATE = 42
 np.random.seed(RANDOM_STATE)
-
-# Set plotting style
 sns.set_style('whitegrid')
 plt.rcParams['figure.figsize'] = (12, 8)
-plt.rcParams['font.size'] = 10
 
 
 class CKDClassifier:
-    """
-    Enhanced class for Chronic Kidney Disease classification
-    using k-Nearest Neighbors with comprehensive preprocessing and evaluation.
-    """
-    
     def __init__(self, data_path='data/chronic_kidney_disease.arff'):
-        """Initialize the classifier with data path."""
         self.data_path = data_path
         self.df = None
-        self.X = None
-        self.y = None
-        self.X_train = None
-        self.X_test = None
-        self.y_train = None
-        self.y_test = None
+        self.X, self.y = None, None
+        self.X_train, self.X_test, self.y_train, self.y_test = None, None, None, None
         self.label_encoders = {}
-        self.preprocessor = None
-        self.best_model = None
+        self.scaler, self.pca, self.best_model = None, None, None
         self.feature_names = None
-        self.numeric_cols = []
-        self.categorical_cols = []
         
-    def load_arff(self, path):
-        """Robust ARFF file loader with fallback parser."""
-        try:
-            data, meta = arff.loadarff(path)
-            df = pd.DataFrame(data)
-            # Decode byte strings
-            for c in df.columns:
-                if df[c].dtype == object:
-                    df[c] = df[c].apply(lambda x: x.decode('utf-8') if isinstance(x, bytes) else x)
-            return df
-        except Exception:
-            # Manual parser fallback
-            attrs = []
-            data_lines = []
-            in_data = False
-            txt = Path(path).read_text(encoding='utf-8', errors='ignore')
-            for raw in txt.splitlines():
-                line = raw.strip()
-                if not line or line.startswith('%'):
-                    continue
-                low = line.lower()
-                if low.startswith('@attribute'):
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        attrs.append(parts[1].strip("'\""))
-                elif low.startswith('@data'):
-                    in_data = True
-                    continue
-                elif in_data:
-                    parts = [p.strip().strip("'\"") for p in line.split(',')]
-                    if len(parts) < len(attrs):
-                        parts += [None] * (len(attrs) - len(parts))
-                    elif len(parts) > len(attrs):
-                        parts = parts[:len(attrs)]
-                    data_lines.append(parts)
-            return pd.DataFrame(data_lines, columns=attrs)
+    def _manual_arff_parse(self, filepath):
+        attributes, data_rows, data_section = [], [], False
+        with open(filepath, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('%'): continue
+                if line.lower() == '@data': data_section = True; continue
+                if line.lower().startswith('@attribute'):
+                    attributes.append(line.split()[1].strip("'\""))
+                elif data_section:
+                    values = [v.strip() for v in line.split(',')]
+                    if len(values) == len(attributes): data_rows.append(values)
+        return pd.DataFrame(data_rows, columns=attributes).replace('?', np.nan)
     
     def load_data(self):
-        """Load data from ARFF file and perform initial exploration."""
-        print("="*80)
-        print("STEP 1: LOADING DATA")
-        print("="*80)
-        
-        self.df = self.load_arff(self.data_path)
-        self.df = self.df.replace('?', np.nan)
-        
-        # Normalize column names
-        self.df.columns = [c.strip().lower() for c in self.df.columns]
-        
-        # Normalize string columns
-        for c in self.df.select_dtypes(include=['object']).columns:
-            self.df[c] = self.df[c].astype(str).str.strip().str.lower().replace({'nan': None})
-        
-        print(f"\nDataset Shape: {self.df.shape}")
-        print(f"Number of Samples: {self.df.shape[0]}")
-        print(f"Number of Features: {self.df.shape[1] - 1}")
-        
+        print("="*80 + "\nSTEP 1: LOADING DATA\n" + "="*80)
+        try:
+            data, meta = arff.loadarff(self.data_path)
+            self.df = pd.DataFrame(data)
+            for col in self.df.columns:
+                if self.df[col].dtype == object:
+                    self.df[col] = self.df[col].str.decode('utf-8')
+        except:
+            self.df = self._manual_arff_parse(self.data_path)
+        print(f"\nDataset: {self.df.shape[0]} samples, {self.df.shape[1]-1} features")
         return self.df
     
-    def prepare_target(self):
-        """Prepare and normalize target variable."""
-        # Normalize target and map
-        self.df['class'] = self.df['class'].astype(str).str.strip().str.lower()
-        # Fix variants
-        self.df['class'] = self.df['class'].replace({
-            'no': 'notckd', 
-            'not ckd': 'notckd', 
-            'not_ckd': 'notckd'
-        })
-        mapped = self.df['class'].map({'ckd': 1, 'notckd': 0})
-        n_unmapped = mapped.isna().sum()
-        if n_unmapped > 0:
-            print(f"\nWarning: Dropping {n_unmapped} rows with unmapped class values")
-            self.df = self.df.loc[mapped.notna()].copy()
-            mapped = mapped.loc[mapped.notna()]
-        self.df['class'] = mapped.astype(int)
-    
     def exploratory_data_analysis(self):
-        """Perform comprehensive EDA on the dataset."""
-        print("\n" + "="*80)
-        print("STEP 2: EXPLORATORY DATA ANALYSIS")
-        print("="*80)
-        
-        # Basic information
-        print("\n--- Dataset Info ---")
-        print(self.df.info())
-        
-        print("\n--- First 5 Rows ---")
-        print(self.df.head())
-        
-        print("\n--- Statistical Summary ---")
-        print(self.df.describe())
-        
-        # Check for missing values
+        print("\n" + "="*80 + "\nSTEP 2: EXPLORATORY DATA ANALYSIS\n" + "="*80)
+        print("\n--- Dataset Info ---\n", self.df.info())
         print("\n--- Missing Values ---")
         missing = self.df.isnull().sum()
-        missing_pct = (missing / len(self.df)) * 100
-        missing_df = pd.DataFrame({
-            'Missing_Count': missing,
-            'Percentage': missing_pct
-        })
-        missing_df = missing_df[missing_df['Missing_Count'] > 0].sort_values(
-            'Missing_Count', ascending=False
-        )
-        print(missing_df)
+        print(pd.DataFrame({'Count': missing[missing > 0], 'Percentage': (missing[missing > 0]/len(self.df)*100)}))
+        print("\n--- Class Distribution ---\n", self.df['class'].value_counts())
         
-        # Class distribution
-        print("\n--- Class Distribution ---")
-        class_dist = self.df['class'].value_counts()
-        print(class_dist)
-        print(f"\nClass Balance: {class_dist.min() / class_dist.max() * 100:.2f}%")
-        
-        # Define numeric and categorical columns
-        numeric_candidates = ['age','bp','sg','al','su','bgr','bu','sc','sod','pot','hemo','pcv','wc','rc']
-        self.numeric_cols = [c for c in numeric_candidates if c in self.df.columns]
-        self.categorical_cols = [c for c in self.df.columns if c not in self.numeric_cols + ['class']]
-        
-        print("\n--- Data Types ---")
-        print(f"Numeric Features ({len(self.numeric_cols)}): {self.numeric_cols}")
-        print(f"Categorical Features ({len(self.categorical_cols)}): {self.categorical_cols}")
-        
-        return self.numeric_cols, self.categorical_cols
+        numeric_cols = self.df.select_dtypes(include=[np.number]).columns.tolist()
+        categorical_cols = [c for c in self.df.select_dtypes(include=['object']).columns if c != 'class']
+        print(f"\nNumeric: {len(numeric_cols)}, Categorical: {len(categorical_cols)}")
+        return numeric_cols, categorical_cols
     
-    def visualize_eda(self):
-        """Create visualizations for EDA."""
-        print("\n--- Creating EDA Visualizations ---")
-        
+    def visualize_eda(self, numeric_cols, categorical_cols):
         fig, axes = plt.subplots(2, 2, figsize=(15, 12))
         
-        # 1. Class Distribution
         class_counts = self.df['class'].value_counts()
-        axes[0, 0].bar(['Not CKD', 'CKD'], class_counts.values, color=['#2ecc71', '#e74c3c'])
-        axes[0, 0].set_title('Class Distribution', fontsize=14, fontweight='bold')
-        axes[0, 0].set_xlabel('Class')
-        axes[0, 0].set_ylabel('Count')
-        for i, v in enumerate(class_counts.values):
-            axes[0, 0].text(i, v + 5, str(v), ha='center', fontweight='bold')
+        axes[0, 0].bar(class_counts.index, class_counts.values, color=['#2ecc71', '#e74c3c'])
+        axes[0, 0].set_title('Class Distribution', fontweight='bold')
+        for i, v in enumerate(class_counts.values): axes[0, 0].text(i, v+5, str(v), ha='center', fontweight='bold')
         
-        # 2. Missing values bar plot
-        missing_data = self.df.isnull().sum().sort_values(ascending=False)
-        missing_data = missing_data[missing_data > 0]
-        if len(missing_data) > 0:
-            missing_data.plot(kind='barh', ax=axes[0, 1], color='coral')
-            axes[0, 1].set_title('Missing Values per Feature', fontsize=14, fontweight='bold')
-            axes[0, 1].set_xlabel('Missing Count')
+        missing_data = self.df.isnull().sum()
+        if missing_data.sum() > 0:
+            axes[0, 1].bar(range(len(missing_data)), missing_data.values)
+            axes[0, 1].set_title('Missing Values per Feature', fontweight='bold')
         
-        # 3. Correlation heatmap (numeric features only)
-        numeric_df = self.df[self.numeric_cols].apply(pd.to_numeric, errors='coerce')
-        correlation = numeric_df.corr()
-        im = axes[1, 0].imshow(correlation, cmap='coolwarm', aspect='auto', vmin=-1, vmax=1)
-        axes[1, 0].set_title('Correlation Heatmap (Numeric Features)', fontsize=14, fontweight='bold')
+        correlation = self.df[numeric_cols].apply(pd.to_numeric, errors='coerce').corr()
+        im = axes[1, 0].imshow(correlation, cmap='coolwarm', vmin=-1, vmax=1)
+        axes[1, 0].set_title('Correlation Heatmap', fontweight='bold')
         axes[1, 0].set_xticks(range(len(correlation.columns)))
-        axes[1, 0].set_yticks(range(len(correlation.columns)))
         axes[1, 0].set_xticklabels(correlation.columns, rotation=90, fontsize=8)
-        axes[1, 0].set_yticklabels(correlation.columns, fontsize=8)
         plt.colorbar(im, ax=axes[1, 0])
         
-        # 4. Age distribution by class
-        if 'age' in self.numeric_cols:
-            for class_label in [0, 1]:
-                subset = self.df[self.df['class'] == class_label]['age'].apply(pd.to_numeric, errors='coerce').dropna()
-                label = 'Not CKD' if class_label == 0 else 'CKD'
-                axes[1, 1].hist(subset, alpha=0.6, label=label, bins=20)
-            axes[1, 1].set_title('Age Distribution by Class', fontsize=14, fontweight='bold')
-            axes[1, 1].set_xlabel('Age')
-            axes[1, 1].set_ylabel('Frequency')
+        if 'age' in numeric_cols:
+            for cls in self.df['class'].unique():
+                axes[1, 1].hist(self.df[self.df['class']==cls]['age'].dropna(), alpha=0.6, label=cls, bins=20)
+            axes[1, 1].set_title('Age Distribution by Class', fontweight='bold')
             axes[1, 1].legend()
         
         plt.tight_layout()
         plt.savefig('eda_visualization.png', dpi=300, bbox_inches='tight')
-        print("EDA visualization saved as 'eda_visualization.png'")
+        print("\n--- Saved: eda_visualization.png")
         plt.close()
-    
-    def data_cleaning(self):
-        """Clean and preprocess the dataset."""
-        print("\n" + "="*80)
-        print("STEP 3: DATA CLEANING AND PREPROCESSING")
-        print("="*80)
         
-        # Coerce numeric columns
-        print("\n--- Converting Numeric Columns ---")
-        for c in self.numeric_cols:
-            self.df[c] = pd.to_numeric(self.df[c], errors='coerce')
+    def data_cleaning(self, numeric_cols, categorical_cols):
+        print("\n" + "="*80 + "\nSTEP 3: DATA CLEANING AND PREPROCESSING\n" + "="*80)
+        df_clean = self.df.replace('?', np.nan)
+        for col in numeric_cols: df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
         
-        # Create derived feature (age group)
-        if 'age' in self.df.columns:
-            self.df['age_group'] = pd.cut(
-                self.df['age'].astype(float), 
-                bins=[0,18,35,50,65,200],
-                labels=['child','young','adult','mid','senior']
-            )
-            if 'age_group' not in self.categorical_cols:
-                self.categorical_cols.append('age_group')
-            print("Created derived feature: age_group")
+        X, y = df_clean.drop('class', axis=1), df_clean['class']
+        X_encoded = X.copy()
         
-        # Split X, y
-        X = self.df.drop(columns=['class']).reset_index(drop=True)
-        y = self.df['class'].reset_index(drop=True)
+        for col in categorical_cols:
+            if col in X_encoded.columns:
+                le = LabelEncoder()
+                mask = X_encoded[col].notna()
+                if mask.sum() > 0:
+                    X_encoded.loc[mask, col] = le.fit_transform(X_encoded.loc[mask, col])
+                    self.label_encoders[col] = le
+                X_encoded[col] = pd.to_numeric(X_encoded[col], errors='coerce')
         
-        # Label-encode categorical columns for KNN imputation
-        print("\n--- Encoding Categorical Variables ---")
-        X_enc = X.copy()
+        imputer = KNNImputer(n_neighbors=5)
+        X_imputed = pd.DataFrame(imputer.fit_transform(X_encoded), columns=X_encoded.columns)
+        for col in categorical_cols:
+            if col in X_imputed.columns: X_imputed[col] = X_imputed[col].round().astype(int)
         
-        # Convert categorical columns to object type
-        for col in self.categorical_cols:
-            if col in X_enc.columns and X_enc[col].dtype.name == 'category':
-                X_enc[col] = X_enc[col].astype(object)
-        
-        for col in self.categorical_cols:
-            if col not in X_enc.columns:
-                continue
-            le = LabelEncoder()
-            mask = X_enc[col].notna()
-            if mask.sum() > 0:
-                X_enc.loc[mask, col] = le.fit_transform(X_enc.loc[mask, col])
-                self.label_encoders[col] = le
-            else:
-                X_enc[col] = np.nan
-            X_enc[col] = pd.to_numeric(X_enc[col], errors='coerce')
-        
-        print(f"Encoded {len(self.label_encoders)} categorical features")
-        
-        # KNN Imputation
-        print("\n--- Imputing Missing Values with KNN Imputer ---")
-        imputer = KNNImputer(n_neighbors=5, weights='uniform')
-        X_imputed = pd.DataFrame(imputer.fit_transform(X_enc), columns=X_enc.columns)
-        
-        # Round categorical columns to integers
-        for col in self.categorical_cols:
-            if col in X_imputed.columns:
-                X_imputed[col] = X_imputed[col].round().astype(int)
-        
-        print(f"Missing values after imputation: {X_imputed.isnull().sum().sum()}")
-        
-        self.X = X_imputed
-        self.y = y
+        le_target = LabelEncoder()
+        self.X, self.y = X_imputed, le_target.fit_transform(y)
+        self.label_encoders['class'] = le_target
         self.feature_names = X_imputed.columns.tolist()
-        
-        print(f"\nFinal dataset shape: {self.X.shape}")
-        print(f"Target variable shape: {self.y.shape}")
-        
+        print(f"\nFinal shape: {self.X.shape}, Missing: {self.X.isnull().sum().sum()}")
         return self.X, self.y
     
     def feature_engineering(self):
-        """Perform feature importance analysis."""
-        print("\n" + "="*80)
-        print("STEP 4: FEATURE IMPORTANCE ANALYSIS")
-        print("="*80)
+        print("\n" + "="*80 + "\nSTEP 4: FEATURE IMPORTANCE\n" + "="*80)
+        mi_scores = pd.Series(mutual_info_classif(self.X, self.y, random_state=RANDOM_STATE), 
+                             index=self.feature_names).sort_values(ascending=False)
+        print("\nTop 10 Features:\n", mi_scores.head(10))
         
-        # Calculate mutual information scores
-        print("\n--- Calculating Feature Importance ---")
-        mi_scores = mutual_info_classif(self.X, self.y, random_state=RANDOM_STATE)
-        mi_scores = pd.Series(mi_scores, index=self.feature_names).sort_values(ascending=False)
-        
-        print("\nTop 10 Most Important Features:")
-        print(mi_scores.head(10))
-        
-        # Visualize feature importance
         fig, ax = plt.subplots(figsize=(12, 8))
         mi_scores.sort_values(ascending=True).plot(kind='barh', ax=ax, color='steelblue')
-        ax.set_title('Feature Importance (Mutual Information)', fontsize=14, fontweight='bold')
-        ax.set_xlabel('Mutual Information Score')
+        ax.set_title('Feature Importance', fontweight='bold')
         plt.tight_layout()
         plt.savefig('feature_importance.png', dpi=300, bbox_inches='tight')
-        print("\nFeature importance plot saved as 'feature_importance.png'")
+        print("\n--- Saved: feature_importance.png")
         plt.close()
-        
         return mi_scores
     
+    def feature_scaling(self):
+        print("\n" + "="*80 + "\nSTEP 5: FEATURE SCALING\n" + "="*80)
+        self.scaler = StandardScaler()
+        self.X = pd.DataFrame(self.scaler.fit_transform(self.X), columns=self.feature_names)
+        print("Applied StandardScaler")
+        return self.X
+    
     def split_data(self, test_size=0.2):
-        """Split data into training and testing sets."""
-        print("\n" + "="*80)
-        print("STEP 5: TRAIN-TEST SPLIT")
-        print("="*80)
-        
-        # Shuffle data
-        self.X, self.y = shuffle(self.X, self.y, random_state=RANDOM_STATE)
-        
+        print("\n" + "="*80 + "\nSTEP 6: TRAIN-TEST SPLIT\n" + "="*80)
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
-            self.X, self.y, test_size=test_size, random_state=RANDOM_STATE, stratify=self.y
-        )
-        
-        print(f"\nTraining set size: {self.X_train.shape[0]} samples")
-        print(f"Testing set size: {self.X_test.shape[0]} samples")
-        print(f"Train/Test split: {(1-test_size)*100:.0f}%/{test_size*100:.0f}%")
-        
-        # Class distribution
-        train_dist = pd.Series(self.y_train).value_counts()
-        test_dist = pd.Series(self.y_test).value_counts()
-        
-        print("\nClass distribution in training set:")
-        print(train_dist)
-        print("\nClass distribution in testing set:")
-        print(test_dist)
-        
+            self.X, self.y, test_size=test_size, random_state=RANDOM_STATE, stratify=self.y)
+        print(f"Train: {self.X_train.shape[0]}, Test: {self.X_test.shape[0]}")
         return self.X_train, self.X_test, self.y_train, self.y_test
     
-    def build_pipeline(self):
-        """Build preprocessing and modeling pipeline with optimal PCA."""
-        print("\n" + "="*80)
-        print("STEP 6: BUILDING PREPROCESSING PIPELINE")
-        print("="*80)
+    def dimensionality_reduction(self, n_components=None, variance_threshold=0.95):
+        print("\n" + "="*80 + "\nSTEP 7: PCA\n" + "="*80)
+        if n_components is None:
+            pca_temp = PCA(random_state=RANDOM_STATE).fit(self.X_train)
+            n_components = np.argmax(np.cumsum(pca_temp.explained_variance_ratio_) >= variance_threshold) + 1
         
-        # Get feature lists
-        num_feats = [c for c in self.numeric_cols if c in self.X.columns]
-        cat_feats = [c for c in self.categorical_cols if c in self.X.columns]
+        self.pca = PCA(n_components=n_components, random_state=RANDOM_STATE)
+        X_train_pca = self.pca.fit_transform(self.X_train)
+        X_test_pca = self.pca.transform(self.X_test)
+        print(f"Reduced: {self.X_train.shape[1]} → {n_components} ({np.sum(self.pca.explained_variance_ratio_)*100:.2f}% variance)")
         
-        print(f"\nNumeric features for scaling: {len(num_feats)}")
-        print(f"Categorical features for encoding: {len(cat_feats)}")
-        
-        # Create preprocessor
-        self.preprocessor = ColumnTransformer([
-            ('num', StandardScaler(), num_feats),
-            ('cat', OneHotEncoder(handle_unknown='ignore', sparse_output=False), cat_feats)
-        ], remainder='drop')
-        
-        # Build pipeline with PCA and KNN
-        pipeline = Pipeline([
-            ('pre', self.preprocessor),
-            ('pca', PCA(random_state=RANDOM_STATE)),
-            ('clf', KNeighborsClassifier())
-        ])
-        
-        print("\nPipeline created: Preprocessor -> PCA -> k-NN")
-        
-        return pipeline
-    
-    def hyperparameter_tuning(self, pipeline):
-        """Perform comprehensive hyperparameter tuning using GridSearchCV."""
-        print("\n" + "="*80)
-        print("STEP 7: HYPERPARAMETER TUNING (GRID SEARCH)")
-        print("="*80)
-        
-        # Estimate encoded feature count for PCA options
-        sample_encoded = self.preprocessor.fit_transform(self.X_train.iloc[:10])
-        encoded_dim = sample_encoded.shape[1]
-        print(f"\nEncoded feature dimension: {encoded_dim}")
-        
-        # Create smart PCA component choices
-        n_comp_choices = sorted(list({
-            min(5, encoded_dim), 
-            min(8, encoded_dim), 
-            min(10, encoded_dim),
-            min(12, encoded_dim), 
-            min(15, encoded_dim), 
-            encoded_dim
-        }))
-        n_comp_choices = [int(c) for c in n_comp_choices if c >= 1]
-        
-        print(f"PCA component choices: {n_comp_choices}")
-        
-        # Define parameter grid
-        param_grid = {
-            'pca__n_components': n_comp_choices,
-            'clf__n_neighbors': [1, 3, 4, 5, 7, 9, 11],
-            'clf__weights': ['uniform', 'distance'],
-            'clf__p': [1, 2]
-        }
-        
-        print("\nParameter grid:")
-        for param, values in param_grid.items():
-            print(f"  {param}: {values}")
-        
-        # Grid search with stratified cross-validation
-        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
-        grid_search = GridSearchCV(
-            estimator=pipeline,
-            param_grid=param_grid,
-            cv=cv,
-            scoring='roc_auc',
-            n_jobs=-1,
-            verbose=1
-        )
-        
-        print("\nPerforming 5-fold stratified cross-validation...")
-        grid_search.fit(self.X_train, self.y_train)
-        
-        print("\n--- Grid Search Results ---")
-        print(f"Best parameters: {grid_search.best_params_}")
-        print(f"Best cross-validation ROC-AUC: {grid_search.best_score_:.4f}")
-        
-        self.best_model = grid_search.best_estimator_
-        
-        # Show top 5 configurations
-        print("\nTop 5 configurations:")
-        results_df = pd.DataFrame(grid_search.cv_results_)
-        results_df = results_df.sort_values('rank_test_score')
-        for idx, row in results_df.head().iterrows():
-            print(f"  Rank {int(row['rank_test_score'])}: "
-                  f"ROC-AUC = {row['mean_test_score']:.4f} "
-                  f"(±{row['std_test_score']:.4f}), "
-                  f"Params = {row['params']}")
-        
-        return self.best_model, grid_search
-    
-    def analyze_pca(self):
-        """Analyze PCA components from best model."""
-        print("\n" + "="*80)
-        print("STEP 8: PCA ANALYSIS")
-        print("="*80)
-        
-        # Extract PCA from pipeline
-        pca = self.best_model.named_steps['pca']
-        n_components = pca.n_components_
-        explained_var = np.sum(pca.explained_variance_ratio_)
-        
-        print(f"\nNumber of PCA components: {n_components}")
-        print(f"Total explained variance: {explained_var*100:.2f}%")
-        print(f"\nExplained variance per component:")
-        for i, var in enumerate(pca.explained_variance_ratio_, 1):
-            print(f"  PC{i}: {var*100:.2f}%")
-        
-        # Visualize PCA analysis
         fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+        axes[0].bar(range(1, len(self.pca.explained_variance_ratio_)+1), self.pca.explained_variance_ratio_, color='steelblue')
+        axes[0].set_title('Explained Variance by Component', fontweight='bold')
         
-        # Individual explained variance
-        axes[0].bar(range(1, len(pca.explained_variance_ratio_) + 1),
-                    pca.explained_variance_ratio_, color='steelblue')
-        axes[0].set_xlabel('Principal Component')
-        axes[0].set_ylabel('Explained Variance Ratio')
-        axes[0].set_title('Explained Variance by Principal Component', fontweight='bold')
-        axes[0].grid(True, alpha=0.3)
-        
-        # Cumulative explained variance
-        cumsum = np.cumsum(pca.explained_variance_ratio_)
-        axes[1].plot(range(1, len(cumsum) + 1), cumsum, marker='o', linestyle='-', color='darkblue')
-        axes[1].axhline(y=0.95, color='r', linestyle='--', label='95% threshold')
-        axes[1].set_xlabel('Number of Components')
-        axes[1].set_ylabel('Cumulative Explained Variance')
+        cumsum = np.cumsum(self.pca.explained_variance_ratio_)
+        axes[1].plot(range(1, len(cumsum)+1), cumsum, marker='o', color='darkblue')
+        axes[1].axhline(y=variance_threshold, color='r', linestyle='--', label=f'{variance_threshold*100}%')
         axes[1].set_title('Cumulative Explained Variance', fontweight='bold')
         axes[1].legend()
         axes[1].grid(True, alpha=0.3)
         
         plt.tight_layout()
         plt.savefig('pca_analysis.png', dpi=300, bbox_inches='tight')
-        print("\nPCA analysis plot saved as 'pca_analysis.png'")
+        print("--- Saved: pca_analysis.png")
         plt.close()
+        return X_train_pca, X_test_pca
     
-    def evaluate_k_values(self):
-        """Evaluate different k values to visualize performance."""
-        print("\n" + "="*80)
-        print("STEP 9: K-VALUE ANALYSIS")
-        print("="*80)
-        
-        # Transform data using best model's preprocessor and PCA
-        X_train_transformed = self.best_model.named_steps['pre'].transform(self.X_train)
-        X_train_transformed = self.best_model.named_steps['pca'].transform(X_train_transformed)
-        X_test_transformed = self.best_model.named_steps['pre'].transform(self.X_test)
-        X_test_transformed = self.best_model.named_steps['pca'].transform(X_test_transformed)
-        
-        k_range = range(1, 31)
-        train_scores = []
-        test_scores = []
-        
-        print(f"\nTesting k values from {min(k_range)} to {max(k_range)}...")
-        
+    def evaluate_k_values(self, X_train, X_test, k_range=range(1, 31)):
+        print("\n" + "="*80 + "\nSTEP 8: K-VALUE ANALYSIS\n" + "="*80)
+        train_scores, test_scores = [], []
         for k in k_range:
-            knn = KNeighborsClassifier(n_neighbors=k)
-            knn.fit(X_train_transformed, self.y_train)
-            
-            train_pred = knn.predict(X_train_transformed)
-            test_pred = knn.predict(X_test_transformed)
-            
-            train_scores.append(accuracy_score(self.y_train, train_pred))
-            test_scores.append(accuracy_score(self.y_test, test_pred))
+            knn = KNeighborsClassifier(n_neighbors=k).fit(X_train, self.y_train)
+            train_scores.append(accuracy_score(self.y_train, knn.predict(X_train)))
+            test_scores.append(accuracy_score(self.y_test, knn.predict(X_test)))
         
         best_k = k_range[np.argmax(test_scores)]
-        best_score = max(test_scores)
+        print(f"Best k: {best_k}, Accuracy: {max(test_scores)*100:.2f}%")
         
-        print(f"\nBest k value: {best_k}")
-        print(f"Best testing accuracy: {best_score*100:.2f}%")
-        
-        # Plot results
         fig, ax = plt.subplots(figsize=(12, 6))
-        ax.plot(k_range, train_scores, label='Training Accuracy', marker='o', linestyle='-', linewidth=2)
-        ax.plot(k_range, test_scores, label='Testing Accuracy', marker='s', linestyle='-', linewidth=2)
+        ax.plot(k_range, train_scores, label='Train', marker='o', linewidth=2)
+        ax.plot(k_range, test_scores, label='Test', marker='s', linewidth=2)
         ax.axvline(x=best_k, color='r', linestyle='--', label=f'Best k={best_k}')
-        ax.set_xlabel('k (Number of Neighbors)', fontsize=12)
-        ax.set_ylabel('Accuracy', fontsize=12)
-        ax.set_title('k-NN Performance vs. k Value', fontsize=14, fontweight='bold')
-        ax.legend(fontsize=10)
+        ax.set_title('k-NN Performance vs k Value', fontweight='bold')
+        ax.legend()
         ax.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.savefig('k_value_analysis.png', dpi=300, bbox_inches='tight')
-        print("\nK-value analysis plot saved as 'k_value_analysis.png'")
+        print("--- Saved: k_value_analysis.png")
         plt.close()
+        return best_k, max(test_scores), train_scores, test_scores
     
-    def comprehensive_evaluation(self):
-        """Perform comprehensive model evaluation with multiple metrics."""
-        print("\n" + "="*80)
-        print("STEP 10: COMPREHENSIVE MODEL EVALUATION")
-        print("="*80)
-        
-        # Make predictions
-        y_pred = self.best_model.predict(self.X_test)
-        y_pred_proba = self.best_model.predict_proba(self.X_test)[:, 1]
-        
-        # Calculate metrics
-        accuracy = accuracy_score(self.y_test, y_pred)
-        precision = precision_score(self.y_test, y_pred)
-        recall = recall_score(self.y_test, y_pred)
-        f1 = f1_score(self.y_test, y_pred)
-        roc_auc = roc_auc_score(self.y_test, y_pred_proba)
-        
-        print(f"\n--- Model Performance Metrics ---")
-        print(f"Accuracy:  {accuracy*100:.2f}%")
-        print(f"Precision: {precision*100:.2f}%")
-        print(f"Recall:    {recall*100:.2f}%")
-        print(f"F1-Score:  {f1*100:.2f}%")
-        print(f"ROC-AUC:   {roc_auc:.4f}")
-        
-        # Confusion Matrix
-        print("\n--- Confusion Matrix ---")
-        cm = confusion_matrix(self.y_test, y_pred)
-        print(cm)
-        
-        # Classification Report
-        print("\n--- Classification Report ---")
-        print(classification_report(self.y_test, y_pred, target_names=['Not CKD', 'CKD']))
-        
-        # Cross-validation
-        print("\n--- Cross-Validation Results ---")
-        cv_scores = cross_val_score(self.best_model, self.X_test, self.y_test, cv=5, scoring='accuracy')
-        print(f"CV Accuracy: {cv_scores.mean()*100:.2f}% (±{cv_scores.std()*100:.2f}%)")
-        
-        # Visualize results
-        self.visualize_evaluation(y_pred, y_pred_proba)
-        
-        return {
-            'accuracy': accuracy,
-            'precision': precision,
-            'recall': recall,
-            'f1_score': f1,
-            'roc_auc': roc_auc,
-            'confusion_matrix': cm,
-            'cv_scores': cv_scores
+    def hyperparameter_tuning(self, X_train, X_test):
+        print("\n" + "="*80 + "\nSTEP 9: HYPERPARAMETER TUNING\n" + "="*80)
+        param_grid = {
+            'n_neighbors': [3, 5, 7, 9, 11, 13, 15],
+            'weights': ['uniform', 'distance'],
+            'metric': ['euclidean', 'manhattan', 'minkowski'],
+            'p': [1, 2]
         }
+        
+        grid_search = GridSearchCV(KNeighborsClassifier(), param_grid, cv=5, scoring='accuracy', n_jobs=-1, verbose=1)
+        grid_search.fit(X_train, self.y_train)
+        self.best_model = grid_search.best_estimator_
+        
+        print(f"\nBest params: {grid_search.best_params_}")
+        print(f"CV accuracy: {grid_search.best_score_*100:.2f}%")
+        print(f"Test accuracy: {accuracy_score(self.y_test, self.best_model.predict(X_test))*100:.2f}%")
+        return self.best_model, grid_search
     
-    def visualize_evaluation(self, y_pred, y_pred_proba):
-        """Create comprehensive evaluation visualizations."""
+    def comprehensive_evaluation(self, X_test):
+        print("\n" + "="*80 + "\nSTEP 10: MODEL EVALUATION\n" + "="*80)
+        y_pred = self.best_model.predict(X_test)
+        y_pred_proba = self.best_model.predict_proba(X_test)
+        
+        acc = accuracy_score(self.y_test, y_pred)
+        prec = precision_score(self.y_test, y_pred, average='weighted')
+        rec = recall_score(self.y_test, y_pred, average='weighted')
+        f1 = f1_score(self.y_test, y_pred, average='weighted')
+        
+        print(f"\nAccuracy: {acc*100:.2f}%, Precision: {prec*100:.2f}%, Recall: {rec*100:.2f}%, F1: {f1*100:.2f}%")
+        print("\n", classification_report(self.y_test, y_pred, target_names=self.label_encoders['class'].classes_))
+        
+        if len(np.unique(self.y_test)) == 2:
+            print(f"ROC-AUC: {roc_auc_score(self.y_test, y_pred_proba[:, 1]):.4f}")
+        
+        self._visualize_evaluation(y_pred, y_pred_proba)
+        return {'accuracy': acc, 'precision': prec, 'recall': rec, 'f1_score': f1}
+    
+    def _visualize_evaluation(self, y_pred, y_pred_proba):
         fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        target_names = self.label_encoders['class'].classes_
         
-        # 1. Confusion Matrix
         cm = confusion_matrix(self.y_test, y_pred)
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[0, 0],
-                    xticklabels=['Not CKD', 'CKD'], yticklabels=['Not CKD', 'CKD'])
-        axes[0, 0].set_title('Confusion Matrix', fontsize=14, fontweight='bold')
-        axes[0, 0].set_ylabel('True Label')
-        axes[0, 0].set_xlabel('Predicted Label')
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[0, 0], 
+                   xticklabels=target_names, yticklabels=target_names)
+        axes[0, 0].set_title('Confusion Matrix', fontweight='bold')
         
-        # 2. ROC Curve
-        fpr, tpr, _ = roc_curve(self.y_test, y_pred_proba)
-        roc_auc = auc(fpr, tpr)
-        axes[0, 1].plot(fpr, tpr, color='darkorange', lw=2,
-                       label=f'ROC curve (AUC = {roc_auc:.4f})')
-        axes[0, 1].plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-        axes[0, 1].set_xlim([0.0, 1.0])
-        axes[0, 1].set_ylim([0.0, 1.05])
-        axes[0, 1].set_xlabel('False Positive Rate')
-        axes[0, 1].set_ylabel('True Positive Rate')
-        axes[0, 1].set_title('ROC Curve', fontsize=14, fontweight='bold')
-        axes[0, 1].legend(loc="lower right")
-        axes[0, 1].grid(True, alpha=0.3)
+        if len(np.unique(self.y_test)) == 2:
+            fpr, tpr, _ = roc_curve(self.y_test, y_pred_proba[:, 1])
+            axes[0, 1].plot(fpr, tpr, color='darkorange', lw=2, label=f'AUC={auc(fpr, tpr):.2f}')
+            axes[0, 1].plot([0, 1], [0, 1], 'navy', lw=2, linestyle='--')
+            axes[0, 1].set_title('ROC Curve', fontweight='bold')
+            axes[0, 1].legend()
+            axes[0, 1].grid(True, alpha=0.3)
         
-        # 3. Prediction Distribution
-        pred_counts = pd.Series(y_pred).value_counts().sort_index()
-        true_counts = pd.Series(self.y_test).value_counts().sort_index()
-        
-        x = np.arange(2)
-        width = 0.35
-        axes[1, 0].bar(x - width/2, true_counts.values, width, label='True', color='steelblue')
-        axes[1, 0].bar(x + width/2, pred_counts.values, width, label='Predicted', color='coral')
-        axes[1, 0].set_xlabel('Class')
-        axes[1, 0].set_ylabel('Count')
-        axes[1, 0].set_title('True vs Predicted Distribution', fontsize=14, fontweight='bold')
+        x = np.arange(len(target_names))
+        axes[1, 0].bar(x-0.2, pd.Series(self.y_test).value_counts().sort_index().values, 0.4, label='True', color='steelblue')
+        axes[1, 0].bar(x+0.2, pd.Series(y_pred).value_counts().sort_index().values, 0.4, label='Predicted', color='coral')
         axes[1, 0].set_xticks(x)
-        axes[1, 0].set_xticklabels(['Not CKD', 'CKD'])
+        axes[1, 0].set_xticklabels(target_names)
+        axes[1, 0].set_title('True vs Predicted', fontweight='bold')
         axes[1, 0].legend()
         
-        # 4. Performance Metrics Bar Chart
-        metrics = {
-            'Accuracy': accuracy_score(self.y_test, y_pred),
-            'Precision': precision_score(self.y_test, y_pred),
-            'Recall': recall_score(self.y_test, y_pred),
-            'F1-Score': f1_score(self.y_test, y_pred)
-        }
-        
-        colors = ['#3498db', '#2ecc71', '#e74c3c', '#f39c12']
-        axes[1, 1].bar(metrics.keys(), metrics.values(), color=colors)
+        metrics = {'Accuracy': accuracy_score(self.y_test, y_pred), 'Precision': precision_score(self.y_test, y_pred, average='weighted'),
+                  'Recall': recall_score(self.y_test, y_pred, average='weighted'), 'F1': f1_score(self.y_test, y_pred, average='weighted')}
+        axes[1, 1].bar(metrics.keys(), metrics.values(), color=['#3498db', '#2ecc71', '#e74c3c', '#f39c12'])
         axes[1, 1].set_ylim([0, 1.1])
-        axes[1, 1].set_ylabel('Score')
-        axes[1, 1].set_title('Performance Metrics', fontsize=14, fontweight='bold')
-        for i, (k, v) in enumerate(metrics.items()):
-            axes[1, 1].text(i, v + 0.02, f'{v:.3f}', ha='center', fontweight='bold')
+        axes[1, 1].set_title('Performance Metrics', fontweight='bold')
+        for i, (k, v) in enumerate(metrics.items()): axes[1, 1].text(i, v+0.02, f'{v:.3f}', ha='center', fontweight='bold')
         
         plt.tight_layout()
         plt.savefig('model_evaluation.png', dpi=300, bbox_inches='tight')
-        print("\nModel evaluation plots saved as 'model_evaluation.png'")
+        print("--- Saved: model_evaluation.png")
         plt.close()
     
-    def save_model(self):
-        """Save the trained model and preprocessing information."""
-        print("\n" + "="*80)
-        print("STEP 11: SAVING MODEL")
-        print("="*80)
+    def compare_with_without_pca(self):
+        print("\n" + "="*80 + "\nSTEP 11: PCA COMPARISON\n" + "="*80)
+        results = {}
         
-        # Save model
-        joblib.dump(self.best_model, 'knn_ckd_final_model.joblib')
-        print("\nModel saved as 'knn_ckd_final_model.joblib'")
+        # No PCA
+        best_k, best_score, _, _ = self.evaluate_k_values(self.X_train, self.X_test, range(1, 21))
+        knn = KNeighborsClassifier(n_neighbors=best_k).fit(self.X_train, self.y_train)
+        results['no_pca'] = {'accuracy': accuracy_score(self.y_test, knn.predict(self.X_test)),
+                            'best_k': best_k, 'n_features': self.X_train.shape[1]}
         
-        # Save preprocessing info
-        preprocess_info = {
-            'label_encoders': self.label_encoders,
-            'numeric_features': self.numeric_cols,
-            'categorical_features': self.categorical_cols
-        }
-        joblib.dump(preprocess_info, 'ckd_preprocess_info.joblib')
-        print("Preprocessing info saved as 'ckd_preprocess_info.joblib'")
-    
-    def generate_report(self, eval_results, grid_search):
-        """Generate a comprehensive text report."""
-        print("\n" + "="*80)
-        print("STEP 12: GENERATING COMPREHENSIVE REPORT")
-        print("="*80)
+        # Multiple PCA configs
+        configs = [{'name': 'PCA_12', 'n_components': 12}, {'name': 'PCA_14', 'n_components': 14},
+                  {'name': 'PCA_16', 'n_components': 16}, {'name': 'PCA_95pct', 'variance_threshold': 0.95}]
         
-        # Extract PCA info
-        pca = self.best_model.named_steps['pca']
-        n_components = pca.n_components_
-        explained_var = np.sum(pca.explained_variance_ratio_)
-        
-        # Extract only serializable best parameters
-        best_params = grid_search.best_params_
-        serializable_params = {}
-        for key, value in best_params.items():
-            if isinstance(value, (int, float, str, bool, list, dict, type(None))):
-                serializable_params[key] = value
+        pca_results, best_pca = [], None
+        for cfg in configs:
+            if 'n_components' in cfg:
+                pca = PCA(n_components=cfg['n_components'], random_state=RANDOM_STATE)
             else:
-                serializable_params[key] = str(value)
+                n = np.argmax(np.cumsum(PCA(random_state=RANDOM_STATE).fit(self.X_train).explained_variance_ratio_) >= cfg['variance_threshold']) + 1
+                pca = PCA(n_components=n, random_state=RANDOM_STATE)
+            
+            X_tr, X_te = pca.fit_transform(self.X_train), pca.transform(self.X_test)
+            k, _, _, _ = self.evaluate_k_values(X_tr, X_te, range(1, 21))
+            knn = KNeighborsClassifier(n_neighbors=k).fit(X_tr, self.y_train)
+            acc = accuracy_score(self.y_test, knn.predict(X_te))
+            
+            # Create label based on config type
+            if 'n_components' in cfg:
+                label = str(cfg['n_components'])
+            else:
+                label = f"{cfg['variance_threshold']*100}% Var"
+            
+            res = {'name': cfg['name'], 'label': label,
+                  'accuracy': acc, 'best_k': k, 'n_features': pca.n_components_,
+                  'variance': np.sum(pca.explained_variance_ratio_), 'X_train': X_tr, 'X_test': X_te, 'pca': pca}
+            pca_results.append(res)
+            results[cfg['name']] = res
+            if best_pca is None or acc > best_pca['accuracy']: best_pca = res
         
-        # Create summary dictionary
-        summary = {
-            'best_params': serializable_params,
-            'cv_best_score': float(grid_search.best_score_),
-            'n_pca_components': int(n_components),
-            'pca_explained_variance': float(explained_var),
-            'test_metrics': {
-                'accuracy': float(eval_results['accuracy']),
-                'precision': float(eval_results['precision']),
-                'recall': float(eval_results['recall']),
-                'f1_score': float(eval_results['f1_score']),
-                'roc_auc': float(eval_results['roc_auc'])
-            }
-        }
+        print(f"\n{'Config':<15} {'Features':<10} {'Variance':<12} {'Accuracy':<12}")
+        print("-"*50)
+        print(f"{'No PCA':<15} {results['no_pca']['n_features']:<10} {'N/A':<12} {results['no_pca']['accuracy']*100:<11.2f}%")
+        for r in pca_results: print(f"{str(r['label']):<15} {r['n_features']:<10} {r['variance']*100:<11.2f}% {r['accuracy']*100:<11.2f}%")
+        print(f"\nBest: {best_pca['label']} → {best_pca['accuracy']*100:.2f}%")
         
-        # Save as JSON
-        with open('ckd_summary.json', 'w') as f:
-            json.dump(summary, f, indent=2)
-        print("\nSummary saved as 'ckd_summary.json'")
+        self._visualize_pca_comparison(results, pca_results)
+        self.pca = best_pca['pca']
+        return results, best_pca['X_train'], best_pca['X_test']
+    
+    def _visualize_pca_comparison(self, results, pca_results):
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        labels = ['No PCA'] + [r['label'] for r in pca_results]
+        accs = [results['no_pca']['accuracy']] + [r['accuracy'] for r in pca_results]
+        feats = [results['no_pca']['n_features']] + [r['n_features'] for r in pca_results]
+        colors = ['steelblue'] + ['coral', 'lightcoral', 'salmon', 'orangered']
         
-        # Create text report
-        report = []
-        report.append("="*80)
-        report.append("CHRONIC KIDNEY DISEASE CLASSIFICATION REPORT")
-        report.append("k-Nearest Neighbors Classifier with Optimal PCA")
-        report.append("="*80)
-        report.append("")
+        bars = axes[0, 0].bar(range(len(labels)), accs, color=colors)
+        axes[0, 0].set_xticks(range(len(labels)))
+        axes[0, 0].set_xticklabels(labels, rotation=15, ha='right')
+        axes[0, 0].set_title('Accuracy Comparison', fontweight='bold')
+        for bar, acc in zip(bars, accs): axes[0, 0].text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.005, f'{acc*100:.2f}%', ha='center', fontweight='bold')
         
-        report.append("1. DATASET INFORMATION")
-        report.append("-" * 40)
-        report.append(f"Total samples: {len(self.df)}")
-        report.append(f"Number of original features: {len(self.feature_names)}")
-        report.append(f"Training samples: {len(self.y_train)}")
-        report.append(f"Testing samples: {len(self.y_test)}")
-        report.append("")
+        bars = axes[0, 1].bar(range(len(labels)), feats, color=colors)
+        axes[0, 1].set_xticks(range(len(labels)))
+        axes[0, 1].set_xticklabels(labels, rotation=15, ha='right')
+        axes[0, 1].set_title('Feature Count', fontweight='bold')
+        for bar, f in zip(bars, feats): axes[0, 1].text(bar.get_x()+bar.get_width()/2, bar.get_height()+0.5, str(f), ha='center', fontweight='bold')
         
-        report.append("2. DATA PREPROCESSING")
-        report.append("-" * 40)
-        report.append("• Missing value imputation: KNN Imputer (k=5)")
-        report.append("• Categorical encoding: Label Encoding + One-Hot Encoding")
-        report.append("• Feature scaling: Standard Scaler (for numeric features)")
-        report.append("• Train-test split: 80-20 (stratified)")
-        report.append(f"• Derived features: age_group")
-        report.append("")
+        reductions = [0] + [(1-r['n_features']/results['no_pca']['n_features'])*100 for r in pca_results]
+        axes[1, 0].plot(reductions, [a*100 for a in accs], marker='o', markersize=10, linewidth=2)
+        axes[1, 0].set_title('Accuracy vs Feature Reduction', fontweight='bold')
+        axes[1, 0].grid(True, alpha=0.3)
         
-        report.append("3. DIMENSIONALITY REDUCTION")
-        report.append("-" * 40)
-        report.append(f"• PCA components: {n_components}")
-        report.append(f"• Explained variance: {explained_var*100:.2f}%")
-        report.append("• Strategy: Optimal component selection via grid search")
-        report.append("")
+        var_data = sorted([(r['n_features'], r['variance']*100) for r in pca_results])
+        axes[1, 1].plot([v[0] for v in var_data], [v[1] for v in var_data], marker='s', markersize=10, linewidth=2)
+        axes[1, 1].axhline(y=95, color='orange', linestyle='--', label='95%')
+        axes[1, 1].set_title('Variance by Components', fontweight='bold')
+        axes[1, 1].legend()
+        axes[1, 1].grid(True, alpha=0.3)
         
-        report.append("4. BEST MODEL HYPERPARAMETERS")
-        report.append("-" * 40)
-        best_params = grid_search.best_params_
-        for param, value in best_params.items():
-            report.append(f"• {param}: {value}")
-        report.append("")
-        
-        report.append("5. MODEL PERFORMANCE")
-        report.append("-" * 40)
-        report.append(f"Cross-Validation ROC-AUC: {grid_search.best_score_:.4f}")
-        report.append(f"Test Set Accuracy: {eval_results['accuracy']*100:.2f}%")
-        report.append(f"Test Set Precision: {eval_results['precision']*100:.2f}%")
-        report.append(f"Test Set Recall: {eval_results['recall']*100:.2f}%")
-        report.append(f"Test Set F1-Score: {eval_results['f1_score']*100:.2f}%")
-        report.append(f"Test Set ROC-AUC: {eval_results['roc_auc']:.4f}")
-        report.append("")
-        
-        report.append("6. CONFUSION MATRIX")
-        report.append("-" * 40)
-        cm = eval_results['confusion_matrix']
-        report.append(f"True Negatives:  {cm[0, 0]}")
-        report.append(f"False Positives: {cm[0, 1]}")
-        report.append(f"False Negatives: {cm[1, 0]}")
-        report.append(f"True Positives:  {cm[1, 1]}")
-        report.append("")
-        
-        report.append("7. KEY FINDINGS")
-        report.append("-" * 40)
-        report.append(f"• PCA reduced features while maintaining {explained_var*100:.1f}% variance")
-        report.append(f"• Optimal k value: {best_params.get('clf__n_neighbors', 'N/A')}")
-        report.append(f"• Distance weighting: {best_params.get('clf__weights', 'N/A')}")
-        report.append(f"• Distance metric: p={best_params.get('clf__p', 'N/A')} (Minkowski)")
-        report.append(f"• Model achieved {eval_results['roc_auc']:.4f} ROC-AUC score")
-        report.append("")
-        
-        report.append("8. CONCLUSION")
-        report.append("-" * 40)
-        report.append("The optimized k-NN classifier with PCA successfully classified")
-        report.append("chronic kidney disease with high accuracy and efficiency.")
-        report.append(f"Using only {n_components} PCA components, the model achieved")
-        report.append(f"{eval_results['accuracy']*100:.1f}% accuracy, demonstrating effective")
-        report.append("dimensionality reduction without sacrificing performance.")
-        report.append("")
-        report.append("="*80)
-        
-        # Save report
-        with open('classification_report.txt', 'w') as f:
-            f.write('\n'.join(report))
-        
-        print("\nReport saved as 'classification_report.txt'")
-        print("\n" + '\n'.join(report))
+        plt.tight_layout()
+        plt.savefig('pca_comparison.png', dpi=300, bbox_inches='tight')
+        print("--- Saved: pca_comparison.png")
+        plt.close()
 
 
-def main(data_path='data/chronic_kidney_disease.arff'):
-    """Main execution function."""
-    print("="*80)
-    print("CHRONIC KIDNEY DISEASE CLASSIFICATION")
-    print("Enhanced k-Nearest Neighbors with Optimal PCA")
-    print("="*80)
+def main():
+    print("="*80 + "\nCHRONIC KIDNEY DISEASE CLASSIFICATION\n" + "="*80)
     
-    # Initialize classifier
-    ckd = CKDClassifier(data_path=data_path)
-    
-    # Step 1: Load data
+    ckd = CKDClassifier(data_path='data/chronic_kidney_disease.arff')
     ckd.load_data()
-    ckd.prepare_target()
-    
-    # Step 2: EDA
     numeric_cols, categorical_cols = ckd.exploratory_data_analysis()
-    ckd.visualize_eda()
-    
-    # Step 3: Data cleaning
-    X, y = ckd.data_cleaning()
-    
-    # Step 4: Feature engineering
-    mi_scores = ckd.feature_engineering()
-    
-    # Step 5: Train-test split
+    ckd.visualize_eda(numeric_cols, categorical_cols)
+    ckd.data_cleaning(numeric_cols, categorical_cols)
+    ckd.feature_engineering()
+    ckd.feature_scaling()
     ckd.split_data(test_size=0.2)
+    pca_results, X_train_pca, X_test_pca = ckd.compare_with_without_pca()
+    ckd.hyperparameter_tuning(X_train_pca, X_test_pca)
+    ckd.comprehensive_evaluation(X_test_pca)
     
-    # Step 6: Build pipeline
-    pipeline = ckd.build_pipeline()
-    
-    # Step 7: Hyperparameter tuning
-    best_model, grid_search = ckd.hyperparameter_tuning(pipeline)
-    
-    # Step 8: PCA analysis
-    ckd.analyze_pca()
-    
-    # Step 9: K-value analysis
-    ckd.evaluate_k_values()
-    
-    # Step 10: Comprehensive evaluation
-    eval_results = ckd.comprehensive_evaluation()
-    
-    # Step 11: Save model
-    ckd.save_model()
-    
-    # Step 12: Generate report
-    ckd.generate_report(eval_results, grid_search)
-    
-    print("\n" + "="*80)
-    print("ANALYSIS COMPLETE!")
-    print("="*80)
-    print("\nGenerated files:")
-    print("  1. eda_visualization.png - EDA plots")
-    print("  2. feature_importance.png - Feature importance analysis")
-    print("  3. pca_analysis.png - PCA component analysis")
-    print("  4. k_value_analysis.png - K-value performance")
-    print("  5. model_evaluation.png - Comprehensive evaluation plots")
-    print("  6. classification_report.txt - Detailed text report")
-    print("  7. ckd_summary.json - JSON summary")
-    print("  8. knn_ckd_final_model.joblib - Trained model")
-    print("  9. ckd_preprocess_info.joblib - Preprocessing info")
-    print("\n" + "="*80)
+    print("\n" + "="*80 + "\nANALYSIS COMPLETE!\n" + "="*80)
+    print("\nGenerated: eda_visualization.png, feature_importance.png, pca_analysis.png,")
+    print("           k_value_analysis.png, model_evaluation.png, pca_comparison.png")
 
 
 if __name__ == "__main__":
