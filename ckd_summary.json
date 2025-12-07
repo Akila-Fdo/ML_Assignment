@@ -12,5 +12,6 @@
     "recall": 0.92,
     "f1": 0.9583333333333334,
     "roc_auc": 0.99
-  }
+  },
+  "pca_components_used": 12
 }
