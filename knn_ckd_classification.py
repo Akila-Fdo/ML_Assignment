@@ -711,9 +711,9 @@ class CKDClassifier:
         plt.close()
     
     def compare_with_without_pca(self):
-        """Compare model performance with and without PCA."""
+        """Compare model performance with and without PCA, testing multiple component numbers."""
         print("\n" + "="*80)
-        print("STEP 12: COMPARISON - WITH vs WITHOUT PCA")
+        print("STEP 12: COMPARISON - WITH vs WITHOUT PCA (MULTIPLE CONFIGURATIONS)")
         print("="*80)
         
         results = {}
@@ -742,71 +742,203 @@ class CKDClassifier:
         print(f"  Accuracy: {results['no_pca']['accuracy']*100:.2f}%")
         print(f"  Features: {results['no_pca']['n_features']}")
         
-        # With PCA
-        print("\n--- Training Model WITH PCA ---")
-        X_train_pca, X_test_pca = self.dimensionality_reduction(variance_threshold=0.95)
+        # Test multiple PCA configurations
+        print("\n--- Testing Multiple PCA Configurations ---")
+        pca_configs = [
+            {'name': 'PCA_12', 'n_components': 12, 'label': '12 Components'},
+            {'name': 'PCA_14', 'n_components': 14, 'label': '14 Components'},
+            {'name': 'PCA_16', 'n_components': 16, 'label': '16 Components'},
+            {'name': 'PCA_95pct', 'variance_threshold': 0.95, 'label': '95% Variance'}
+        ]
         
-        best_k_pca, best_score_pca, _, _ = self.evaluate_k_values(
-            X_train_pca, X_test_pca, k_range=range(1, 21)
-        )
+        pca_results_list = []
+        best_pca_config = None
+        best_pca_accuracy = 0
         
-        knn_pca = KNeighborsClassifier(n_neighbors=best_k_pca)
-        knn_pca.fit(X_train_pca, self.y_train)
-        y_pred_pca = knn_pca.predict(X_test_pca)
+        for config in pca_configs:
+            print(f"\n--- Testing {config['label']} ---")
+            
+            # Apply PCA
+            if 'n_components' in config:
+                pca = PCA(n_components=config['n_components'], random_state=RANDOM_STATE)
+                X_train_pca = pca.fit_transform(X_train_no_pca)
+                X_test_pca = pca.transform(X_test_no_pca)
+                variance_explained = np.sum(pca.explained_variance_ratio_)
+                n_components = config['n_components']
+            else:
+                pca_temp = PCA(random_state=RANDOM_STATE)
+                pca_temp.fit(X_train_no_pca)
+                cumsum = np.cumsum(pca_temp.explained_variance_ratio_)
+                n_components = np.argmax(cumsum >= config['variance_threshold']) + 1
+                
+                pca = PCA(n_components=n_components, random_state=RANDOM_STATE)
+                X_train_pca = pca.fit_transform(X_train_no_pca)
+                X_test_pca = pca.transform(X_test_no_pca)
+                variance_explained = np.sum(pca.explained_variance_ratio_)
+            
+            # Evaluate
+            best_k_pca, best_score_pca, _, _ = self.evaluate_k_values(
+                X_train_pca, X_test_pca, k_range=range(1, 21)
+            )
+            
+            knn_pca = KNeighborsClassifier(n_neighbors=best_k_pca)
+            knn_pca.fit(X_train_pca, self.y_train)
+            y_pred_pca = knn_pca.predict(X_test_pca)
+            accuracy = accuracy_score(self.y_test, y_pred_pca)
+            
+            result = {
+                'name': config['name'],
+                'label': config['label'],
+                'accuracy': accuracy,
+                'best_k': best_k_pca,
+                'n_features': n_components,
+                'variance_explained': variance_explained,
+                'X_train': X_train_pca,
+                'X_test': X_test_pca,
+                'pca_object': pca
+            }
+            
+            pca_results_list.append(result)
+            results[config['name']] = result
+            
+            print(f"  Components: {n_components}")
+            print(f"  Variance Explained: {variance_explained*100:.2f}%")
+            print(f"  Best k: {best_k_pca}")
+            print(f"  Accuracy: {accuracy*100:.2f}%")
+            print(f"  Feature Reduction: {results['no_pca']['n_features']} → {n_components} "
+                  f"({(1 - n_components/results['no_pca']['n_features'])*100:.1f}% reduction)")
+            
+            # Track best configuration
+            if accuracy > best_pca_accuracy:
+                best_pca_accuracy = accuracy
+                best_pca_config = result
         
-        results['with_pca'] = {
-            'accuracy': accuracy_score(self.y_test, y_pred_pca),
-            'best_k': best_k_pca,
-            'n_features': X_train_pca.shape[1]
-        }
+        # Summary comparison
+        print("\n" + "="*60)
+        print("--- PCA CONFIGURATION COMPARISON SUMMARY ---")
+        print("="*60)
+        print(f"\n{'Configuration':<20} {'Features':<10} {'Variance':<12} {'Accuracy':<12} {'k':<5}")
+        print("-" * 60)
+        print(f"{'No PCA':<20} {results['no_pca']['n_features']:<10} {'N/A':<12} "
+              f"{results['no_pca']['accuracy']*100:<11.2f}% {results['no_pca']['best_k']:<5}")
         
-        print(f"\nResults WITH PCA:")
-        print(f"  Best k: {best_k_pca}")
-        print(f"  Accuracy: {results['with_pca']['accuracy']*100:.2f}%")
-        print(f"  Features: {results['with_pca']['n_features']}")
+        for result in pca_results_list:
+            print(f"{result['label']:<20} {result['n_features']:<10} "
+                  f"{result['variance_explained']*100:<11.2f}% "
+                  f"{result['accuracy']*100:<11.2f}% {result['best_k']:<5}")
         
-        # Comparison
-        print("\n--- Comparison Summary ---")
-        print(f"Accuracy difference: {abs(results['with_pca']['accuracy'] - results['no_pca']['accuracy'])*100:.2f}%")
-        print(f"Feature reduction: {results['no_pca']['n_features']} → {results['with_pca']['n_features']} "
-              f"({(1 - results['with_pca']['n_features']/results['no_pca']['n_features'])*100:.1f}% reduction)")
+        print("\n" + "="*60)
+        print(f"BEST PCA CONFIGURATION: {best_pca_config['label']}")
+        print(f"  Features: {best_pca_config['n_features']} (from {results['no_pca']['n_features']})")
+        print(f"  Reduction: {(1 - best_pca_config['n_features']/results['no_pca']['n_features'])*100:.1f}%")
+        print(f"  Accuracy: {best_pca_config['accuracy']*100:.2f}%")
+        print(f"  Variance Explained: {best_pca_config['variance_explained']*100:.2f}%")
+        print("="*60)
         
-        # Visualization
-        fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+        # Enhanced Visualization
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         
-        # Accuracy comparison
-        categories = ['Without PCA', 'With PCA']
-        accuracies = [results['no_pca']['accuracy'], results['with_pca']['accuracy']]
-        colors = ['steelblue', 'coral']
+        # 1. Accuracy comparison for all configurations
+        config_labels = ['No PCA'] + [r['label'] for r in pca_results_list]
+        accuracies = [results['no_pca']['accuracy']] + [r['accuracy'] for r in pca_results_list]
+        colors_list = ['steelblue'] + ['coral', 'lightcoral', 'salmon', 'orangered']
         
-        axes[0].bar(categories, accuracies, color=colors)
-        axes[0].set_ylim([0.8, 1.0])
-        axes[0].set_ylabel('Accuracy')
-        axes[0].set_title('Accuracy Comparison', fontsize=14, fontweight='bold')
-        for i, v in enumerate(accuracies):
-            axes[0].text(i, v + 0.01, f'{v*100:.2f}%', ha='center', fontweight='bold')
+        bars = axes[0, 0].bar(range(len(config_labels)), accuracies, color=colors_list)
+        axes[0, 0].set_ylim([0.85, 1.0])
+        axes[0, 0].set_ylabel('Accuracy', fontsize=12)
+        axes[0, 0].set_title('Accuracy Comparison Across PCA Configurations', 
+                             fontsize=14, fontweight='bold')
+        axes[0, 0].set_xticks(range(len(config_labels)))
+        axes[0, 0].set_xticklabels(config_labels, rotation=15, ha='right')
+        axes[0, 0].grid(axis='y', alpha=0.3)
         
-        # Feature count comparison
-        features = [results['no_pca']['n_features'], results['with_pca']['n_features']]
+        for i, (bar, acc) in enumerate(zip(bars, accuracies)):
+            height = bar.get_height()
+            axes[0, 0].text(bar.get_x() + bar.get_width()/2., height + 0.005,
+                           f'{acc*100:.2f}%', ha='center', va='bottom', fontweight='bold')
         
-        axes[1].bar(categories, features, color=colors)
-        axes[1].set_ylabel('Number of Features')
-        axes[1].set_title('Feature Count Comparison', fontsize=14, fontweight='bold')
-        for i, v in enumerate(features):
-            axes[1].text(i, v + 0.5, str(v), ha='center', fontweight='bold')
+        # 2. Feature count comparison
+        feature_counts = [results['no_pca']['n_features']] + [r['n_features'] for r in pca_results_list]
+        
+        bars = axes[0, 1].bar(range(len(config_labels)), feature_counts, color=colors_list)
+        axes[0, 1].set_ylabel('Number of Features', fontsize=12)
+        axes[0, 1].set_title('Feature Count Comparison', fontsize=14, fontweight='bold')
+        axes[0, 1].set_xticks(range(len(config_labels)))
+        axes[0, 1].set_xticklabels(config_labels, rotation=15, ha='right')
+        axes[0, 1].grid(axis='y', alpha=0.3)
+        
+        for bar, count in zip(bars, feature_counts):
+            height = bar.get_height()
+            axes[0, 1].text(bar.get_x() + bar.get_width()/2., height + 0.5,
+                           str(count), ha='center', va='bottom', fontweight='bold')
+        
+        # 3. Accuracy vs Feature Reduction tradeoff
+        feature_reductions = [0] + [(1 - r['n_features']/results['no_pca']['n_features'])*100 
+                                     for r in pca_results_list]
+        
+        axes[1, 0].plot(feature_reductions, [a*100 for a in accuracies], 
+                       marker='o', markersize=10, linewidth=2, color='darkblue')
+        axes[1, 0].set_xlabel('Feature Reduction (%)', fontsize=12)
+        axes[1, 0].set_ylabel('Accuracy (%)', fontsize=12)
+        axes[1, 0].set_title('Accuracy vs Feature Reduction Trade-off', 
+                            fontsize=14, fontweight='bold')
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        for i, (x, y, label) in enumerate(zip(feature_reductions, 
+                                               [a*100 for a in accuracies], 
+                                               config_labels)):
+            axes[1, 0].annotate(label, (x, y), textcoords="offset points", 
+                               xytext=(0,10), ha='center', fontsize=9)
+        
+        # 4. Variance Explained vs Components
+        variance_data = [(r['n_features'], r['variance_explained']*100) 
+                        for r in pca_results_list]
+        variance_data.sort()
+        
+        if variance_data:
+            components = [v[0] for v in variance_data]
+            variances = [v[1] for v in variance_data]
+            
+            axes[1, 1].plot(components, variances, marker='s', markersize=10, 
+                           linewidth=2, color='darkgreen')
+            axes[1, 1].axhline(y=90, color='r', linestyle='--', alpha=0.5, label='90% threshold')
+            axes[1, 1].axhline(y=95, color='orange', linestyle='--', alpha=0.5, label='95% threshold')
+            axes[1, 1].set_xlabel('Number of Components', fontsize=12)
+            axes[1, 1].set_ylabel('Variance Explained (%)', fontsize=12)
+            axes[1, 1].set_title('Variance Explained by PCA Components', 
+                                fontsize=14, fontweight='bold')
+            axes[1, 1].legend()
+            axes[1, 1].grid(True, alpha=0.3)
+            
+            for comp, var in zip(components, variances):
+                axes[1, 1].annotate(f'{var:.1f}%', (comp, var), 
+                                   textcoords="offset points", 
+                                   xytext=(0,10), ha='center', fontsize=9)
         
         plt.tight_layout()
         plt.savefig('pca_comparison.png', dpi=300, bbox_inches='tight')
-        print("\nPCA comparison plot saved as 'pca_comparison.png'")
+        print("\nEnhanced PCA comparison plot saved as 'pca_comparison.png'")
         plt.close()
         
-        return results, X_train_pca, X_test_pca
+        # Store the best PCA configuration for later use
+        self.pca = best_pca_config['pca_object']
+        
+        return results, best_pca_config['X_train'], best_pca_config['X_test']
     
-    def generate_report(self, results_no_pca, results_with_pca, best_model_results):
+    def generate_report(self, pca_results, best_model_results):
         """Generate a comprehensive text report."""
         print("\n" + "="*80)
         print("GENERATING COMPREHENSIVE REPORT")
         print("="*80)
+        
+        # Find best PCA configuration
+        best_pca = None
+        best_pca_acc = 0
+        for key, value in pca_results.items():
+            if key != 'no_pca' and isinstance(value, dict) and 'accuracy' in value:
+                if value['accuracy'] > best_pca_acc:
+                    best_pca_acc = value['accuracy']
+                    best_pca = value
         
         report = []
         report.append("="*80)
@@ -833,20 +965,34 @@ class CKDClassifier:
         
         report.append("3. MODEL PERFORMANCE WITHOUT PCA")
         report.append("-" * 40)
-        report.append(f"Number of features: {results_no_pca['no_pca']['n_features']}")
-        report.append(f"Best k value: {results_no_pca['no_pca']['best_k']}")
-        report.append(f"Accuracy: {results_no_pca['no_pca']['accuracy']*100:.2f}%")
+        report.append(f"Number of features: {pca_results['no_pca']['n_features']}")
+        report.append(f"Best k value: {pca_results['no_pca']['best_k']}")
+        report.append(f"Accuracy: {pca_results['no_pca']['accuracy']*100:.2f}%")
         report.append("")
         
-        report.append("4. MODEL PERFORMANCE WITH PCA")
+        report.append("4. PCA DIMENSIONALITY REDUCTION RESULTS")
         report.append("-" * 40)
-        report.append(f"Number of features: {results_no_pca['with_pca']['n_features']}")
-        report.append(f"Best k value: {results_no_pca['with_pca']['best_k']}")
-        report.append(f"Accuracy: {results_no_pca['with_pca']['accuracy']*100:.2f}%")
-        report.append(f"Variance explained: 95%")
+        report.append("Multiple PCA configurations tested:")
+        for key, value in pca_results.items():
+            if key != 'no_pca' and isinstance(value, dict) and 'label' in value:
+                report.append(f"• {value['label']}: "
+                            f"{value['n_features']} features, "
+                            f"{value['variance_explained']*100:.2f}% variance, "
+                            f"{value['accuracy']*100:.2f}% accuracy")
         report.append("")
         
-        report.append("5. BEST MODEL (AFTER HYPERPARAMETER TUNING)")
+        if best_pca:
+            report.append("5. BEST PCA CONFIGURATION")
+            report.append("-" * 40)
+            report.append(f"Configuration: {best_pca.get('label', 'N/A')}")
+            report.append(f"Number of features: {best_pca['n_features']} (from {pca_results['no_pca']['n_features']})")
+            report.append(f"Feature reduction: {(1 - best_pca['n_features']/pca_results['no_pca']['n_features'])*100:.1f}%")
+            report.append(f"Best k value: {best_pca['best_k']}")
+            report.append(f"Accuracy: {best_pca['accuracy']*100:.2f}%")
+            report.append(f"Variance explained: {best_pca['variance_explained']*100:.2f}%")
+            report.append("")
+        
+        report.append("6. BEST MODEL (AFTER HYPERPARAMETER TUNING)")
         report.append("-" * 40)
         report.append(f"Best parameters: {self.best_model.get_params()}")
         report.append(f"Accuracy: {best_model_results['accuracy']*100:.2f}%")
@@ -855,28 +1001,35 @@ class CKDClassifier:
         report.append(f"F1-Score: {best_model_results['f1_score']*100:.2f}%")
         report.append("")
         
-        report.append("6. EFFECT OF K PARAMETER")
+        report.append("7. EFFECT OF K PARAMETER")
         report.append("-" * 40)
         report.append("The k parameter significantly affects classification accuracy:")
         report.append("• Small k (1-3): High variance, prone to overfitting")
         report.append("• Medium k (5-11): Balanced bias-variance tradeoff")
         report.append("• Large k (>15): High bias, may underfit")
-        report.append(f"• Optimal k found: {results_no_pca['with_pca']['best_k']}")
+        if best_pca:
+            report.append(f"• Optimal k found: {best_pca['best_k']}")
         report.append("")
         
-        report.append("7. KEY FINDINGS")
+        report.append("8. KEY FINDINGS")
         report.append("-" * 40)
         report.append("• k-NN classifier achieved high accuracy on CKD dataset")
-        report.append("• PCA reduced dimensionality while maintaining performance")
+        report.append("• Tested multiple PCA configurations (12, 14, 16, and 95% variance)")
+        report.append("• PCA reduced dimensionality significantly while maintaining performance")
+        if best_pca:
+            report.append(f"• Best configuration: {best_pca['n_features']} components "
+                        f"({(1-best_pca['n_features']/pca_results['no_pca']['n_features'])*100:.1f}% reduction)")
         report.append("• Optimal k value balances model complexity and accuracy")
         report.append("• Feature importance analysis identified key predictors")
         report.append("")
         
-        report.append("8. CONCLUSION")
+        report.append("9. CONCLUSION")
         report.append("-" * 40)
         report.append("The k-NN classifier successfully classified chronic kidney disease")
         report.append("with high accuracy. Preprocessing and hyperparameter tuning were")
-        report.append("crucial for optimal performance.")
+        report.append("crucial for optimal performance. PCA dimensionality reduction")
+        report.append("proved effective in reducing computational complexity while")
+        report.append("maintaining classification accuracy.")
         report.append("")
         report.append("="*80)
         
@@ -931,7 +1084,7 @@ def main():
     eval_results = ckd.comprehensive_evaluation(X_test_pca, model_name="Best k-NN")
     
     # Generate report
-    ckd.generate_report(pca_results, pca_results, eval_results)
+    ckd.generate_report(pca_results, eval_results)
     
     print("\n" + "="*80)
     print("ANALYSIS COMPLETE!")

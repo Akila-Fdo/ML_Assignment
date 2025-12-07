@@ -23,40 +23,54 @@ Number of features: 24
 Best k value: 4
 Accuracy: 96.25%
 
-4. MODEL PERFORMANCE WITH PCA
+4. PCA DIMENSIONALITY REDUCTION RESULTS
 ----------------------------------------
-Number of features: 20
-Best k value: 4
-Accuracy: 96.25%
-Variance explained: 95%
+Multiple PCA configurations tested:
+• 12 Components: 12 features, 76.60% variance, 98.75% accuracy
+• 14 Components: 14 features, 82.43% variance, 98.75% accuracy
+• 16 Components: 16 features, 87.57% variance, 98.75% accuracy
+• 95% Variance: 20 features, 95.24% variance, 96.25% accuracy
 
-5. BEST MODEL (AFTER HYPERPARAMETER TUNING)
+5. BEST PCA CONFIGURATION
+----------------------------------------
+Configuration: 12 Components
+Number of features: 12 (from 24)
+Feature reduction: 50.0%
+Best k value: 2
+Accuracy: 98.75%
+Variance explained: 76.60%
+
+6. BEST MODEL (AFTER HYPERPARAMETER TUNING)
 ----------------------------------------
 Best parameters: {'algorithm': 'auto', 'leaf_size': 30, 'metric': 'euclidean', 'metric_params': None, 'n_jobs': None, 'n_neighbors': 3, 'p': 1, 'weights': 'uniform'}
-Accuracy: 95.00%
-Precision: 95.59%
-Recall: 95.00%
-F1-Score: 95.05%
+Accuracy: 96.25%
+Precision: 96.59%
+Recall: 96.25%
+F1-Score: 96.28%
 
-6. EFFECT OF K PARAMETER
+7. EFFECT OF K PARAMETER
 ----------------------------------------
 The k parameter significantly affects classification accuracy:
 • Small k (1-3): High variance, prone to overfitting
 • Medium k (5-11): Balanced bias-variance tradeoff
 • Large k (>15): High bias, may underfit
-• Optimal k found: 4
+• Optimal k found: 2
 
-7. KEY FINDINGS
+8. KEY FINDINGS
 ----------------------------------------
 • k-NN classifier achieved high accuracy on CKD dataset
-• PCA reduced dimensionality while maintaining performance
+• Tested multiple PCA configurations (12, 14, 16, and 95% variance)
+• PCA reduced dimensionality significantly while maintaining performance
+• Best configuration: 12 components (50.0% reduction)
 • Optimal k value balances model complexity and accuracy
 • Feature importance analysis identified key predictors
 
-8. CONCLUSION
+9. CONCLUSION
 ----------------------------------------
 The k-NN classifier successfully classified chronic kidney disease
 with high accuracy. Preprocessing and hyperparameter tuning were
-crucial for optimal performance.
+crucial for optimal performance. PCA dimensionality reduction
+proved effective in reducing computational complexity while
+maintaining classification accuracy.
 
 ================================================================================
