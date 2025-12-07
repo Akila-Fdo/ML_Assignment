@@ -77,35 +77,66 @@ class CKDClassifier:
         return numeric_cols, categorical_cols
     
     def visualize_eda(self, numeric_cols, categorical_cols):
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        
+        # Plot 1: Class Distribution
+        fig, ax = plt.subplots(figsize=(10, 6))
         class_counts = self.df['class'].value_counts()
-        axes[0, 0].bar(class_counts.index, class_counts.values, color=['#2ecc71', '#e74c3c'])
-        axes[0, 0].set_title('Class Distribution', fontweight='bold')
-        for i, v in enumerate(class_counts.values): axes[0, 0].text(i, v+5, str(v), ha='center', fontweight='bold')
+        ax.bar(class_counts.index, class_counts.values, color=['#2ecc71', '#e74c3c'])
+        ax.set_title('Class Distribution', fontweight='bold', fontsize=14)
+        ax.set_xlabel('Class', fontweight='bold')
+        ax.set_ylabel('Count', fontweight='bold')
+        for i, v in enumerate(class_counts.values): 
+            ax.text(i, v+5, str(v), ha='center', fontweight='bold')
+        plt.tight_layout()
+        plt.savefig('class_distribution.png', dpi=300, bbox_inches='tight')
+        print("\n--- Saved: class_distribution.png")
+        plt.close()
         
+        # Plot 2: Missing Values
+        fig, ax = plt.subplots(figsize=(12, 6))
         missing_data = self.df.isnull().sum()
         if missing_data.sum() > 0:
-            axes[0, 1].bar(range(len(missing_data)), missing_data.values)
-            axes[0, 1].set_title('Missing Values per Feature', fontweight='bold')
-        
-        correlation = self.df[numeric_cols].apply(pd.to_numeric, errors='coerce').corr()
-        im = axes[1, 0].imshow(correlation, cmap='coolwarm', vmin=-1, vmax=1)
-        axes[1, 0].set_title('Correlation Heatmap', fontweight='bold')
-        axes[1, 0].set_xticks(range(len(correlation.columns)))
-        axes[1, 0].set_xticklabels(correlation.columns, rotation=90, fontsize=8)
-        plt.colorbar(im, ax=axes[1, 0])
-        
-        if 'age' in numeric_cols:
-            for cls in self.df['class'].unique():
-                axes[1, 1].hist(self.df[self.df['class']==cls]['age'].dropna(), alpha=0.6, label=cls, bins=20)
-            axes[1, 1].set_title('Age Distribution by Class', fontweight='bold')
-            axes[1, 1].legend()
-        
+            ax.bar(range(len(missing_data)), missing_data.values, color='steelblue')
+            ax.set_xticks(range(len(missing_data)))
+            ax.set_xticklabels(missing_data.index, rotation=90, ha='right')
+            ax.set_title('Missing Values per Feature', fontweight='bold', fontsize=14)
+            ax.set_xlabel('Feature', fontweight='bold')
+            ax.set_ylabel('Missing Count', fontweight='bold')
+            ax.grid(axis='y', alpha=0.3)
         plt.tight_layout()
-        plt.savefig('eda_visualization.png', dpi=300, bbox_inches='tight')
-        print("\n--- Saved: eda_visualization.png")
+        plt.savefig('missing_values.png', dpi=300, bbox_inches='tight')
+        print("--- Saved: missing_values.png")
         plt.close()
+        
+        # Plot 3: Correlation Heatmap
+        fig, ax = plt.subplots(figsize=(12, 10))
+        correlation = self.df[numeric_cols].apply(pd.to_numeric, errors='coerce').corr()
+        im = ax.imshow(correlation, cmap='coolwarm', vmin=-1, vmax=1, aspect='auto')
+        ax.set_title('Correlation Heatmap (Numeric Features)', fontweight='bold', fontsize=14)
+        ax.set_xticks(range(len(correlation.columns)))
+        ax.set_yticks(range(len(correlation.columns)))
+        ax.set_xticklabels(correlation.columns, rotation=90, fontsize=9)
+        ax.set_yticklabels(correlation.columns, fontsize=9)
+        plt.colorbar(im, ax=ax)
+        plt.tight_layout()
+        plt.savefig('correlation_heatmap.png', dpi=300, bbox_inches='tight')
+        print("--- Saved: correlation_heatmap.png")
+        plt.close()
+        
+        # Plot 4: Age Distribution by Class
+        if 'age' in numeric_cols:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            for cls in self.df['class'].unique():
+                ax.hist(self.df[self.df['class']==cls]['age'].dropna(), 
+                       alpha=0.6, label=cls, bins=20, edgecolor='black')
+            ax.set_title('Age Distribution by Class', fontweight='bold', fontsize=14)
+            ax.set_xlabel('Age', fontweight='bold')
+            ax.set_ylabel('Frequency', fontweight='bold')
+            ax.legend(title='Class', fontsize=10)
+            ax.grid(axis='y', alpha=0.3)
+            plt.tight_layout()
+            plt.savefig('age_distribution.png', dpi=300, bbox_inches='tight')
+            print("--- Saved: age_distribution.png")
+            plt.close()
         
     def data_cleaning(self, numeric_cols, categorical_cols):
         print("\n" + "="*80 + "\nSTEP 3: DATA CLEANING AND PREPROCESSING\n" + "="*80)
@@ -394,7 +425,8 @@ def main():
     ckd.comprehensive_evaluation(X_test_pca)
     
     print("\n" + "="*80 + "\nANALYSIS COMPLETE!\n" + "="*80)
-    print("\nGenerated: eda_visualization.png, feature_importance.png, pca_analysis.png,")
+    print("\nGenerated: class_distribution.png, missing_values.png, correlation_heatmap.png,")
+    print("           age_distribution.png, feature_importance.png, pca_analysis.png,")
     print("           k_value_analysis.png, model_evaluation.png, pca_comparison.png")
 
 
