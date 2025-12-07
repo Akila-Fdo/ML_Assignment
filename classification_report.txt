@@ -1,0 +1,66 @@
+================================================================================
+CHRONIC KIDNEY DISEASE CLASSIFICATION REPORT
+k-Nearest Neighbors Classifier with Optimal PCA
+================================================================================
+
+1. DATASET INFORMATION
+----------------------------------------
+Total samples: 400
+Number of original features: 25
+Training samples: 320
+Testing samples: 80
+
+2. DATA PREPROCESSING
+----------------------------------------
+• Missing value imputation: KNN Imputer (k=5)
+• Categorical encoding: Label Encoding + One-Hot Encoding
+• Feature scaling: Standard Scaler (for numeric features)
+• Train-test split: 80-20 (stratified)
+• Derived features: age_group
+
+3. DIMENSIONALITY REDUCTION
+----------------------------------------
+• PCA components: 12
+• Explained variance: 77.55%
+• Strategy: Optimal component selection via grid search
+
+4. BEST MODEL HYPERPARAMETERS
+----------------------------------------
+• clf__n_neighbors: 11
+• clf__p: 1
+• clf__weights: distance
+• pca__n_components: 12
+
+5. MODEL PERFORMANCE
+----------------------------------------
+Cross-Validation ROC-AUC: 0.9992
+Test Set Accuracy: 95.00%
+Test Set Precision: 100.00%
+Test Set Recall: 92.00%
+Test Set F1-Score: 95.83%
+Test Set ROC-AUC: 0.9900
+
+6. CONFUSION MATRIX
+----------------------------------------
+True Negatives:  30
+False Positives: 0
+False Negatives: 4
+True Positives:  46
+
+7. KEY FINDINGS
+----------------------------------------
+• PCA reduced features while maintaining 77.6% variance
+• Optimal k value: 11
+• Distance weighting: distance
+• Distance metric: p=1 (Minkowski)
+• Model achieved 0.9900 ROC-AUC score
+
+8. CONCLUSION
+----------------------------------------
+The optimized k-NN classifier with PCA successfully classified
+chronic kidney disease with high accuracy and efficiency.
+Using only 12 PCA components, the model achieved
+95.0% accuracy, demonstrating effective
+dimensionality reduction without sacrificing performance.
+
+================================================================================
